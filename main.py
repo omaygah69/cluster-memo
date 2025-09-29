@@ -5,12 +5,14 @@ from sklearn.preprocessing import Normalizer
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score, silhouette_samples
 from sklearn.manifold import TSNE
-from sentence_transformers import SentenceTransformer
+from gensim.models import Doc2Vec  # For Doc2Vec embeddings
+from gensim.utils import simple_preprocess  # For tokenization
 from sklearn.feature_extraction.text import TfidfVectorizer
-import umap
+from sklearn.decomposition import PCA  # Replaced UMAP with PCA
 import os
 from scipy.optimize import linear_sum_assignment
 import shutil
+from gensim.models.doc2vec import TaggedDocument
 
 num_clusters = 5
 top_n_representatives = 3
@@ -30,27 +32,38 @@ with open("memos.json", "r", encoding="utf-8") as f:
 documents = [memo["clean_text"] for memo in memos]
 filenames = [memo["filename"] for memo in memos]
 
-# sentence embeddings
-print("Generating sentence embeddings (MiniLM)...")
-model = SentenceTransformer('all-MiniLM-L6-v2')
-X = model.encode(documents, convert_to_numpy=True, show_progress_bar=True)
+# Doc2Vec embeddings
+print("Generating document embeddings with Doc2Vec...")
+# Prepare tagged documents (required for Doc2Vec)
+tagged_docs = [TaggedDocument(simple_preprocess(doc), [i]) for i, doc in enumerate(documents)]
+# Train Doc2Vec model
+model = Doc2Vec(
+    vector_size=384,  # Match MiniLM dimensionality
+    window=5,         # Context window size
+    min_count=2,      # Ignore rare words
+    workers=4,        # Parallel training
+    epochs=20,        # Training iterations
+    dm=0,             # DBOW mode (faster, good for larger texts)
+    seed=42
+)
+model.build_vocab(tagged_docs)
+model.train(tagged_docs, total_examples=model.corpus_count, epochs=model.epochs)
+# Infer vectors for all documents
+X = np.array([model.infer_vector(simple_preprocess(doc)) for doc in documents])
 X = Normalizer().fit_transform(X)
 
-# umap 
-print("Reducing dimensionality with UMAP...")
-umap_reducer = umap.UMAP(
-    n_neighbors=20,    # finer local structure
-    n_components=60,   # retain more information
-    min_dist=0.4,      # avoids overly tight clusters
-    metric='cosine',
+# PCA reduction (replaced UMAP)
+print("Reducing dimensionality with PCA...")
+pca_reducer = PCA(
+    n_components=60,  # Retain more information, same as before
     random_state=42
 )
-X_umap = umap_reducer.fit_transform(X)
+X_reduced = pca_reducer.fit_transform(X)
 
 # Kmeans cluster
 print(f"\nClustering into {num_clusters} clusters using KMeans...")
 kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-labels = kmeans.fit_predict(X_umap)
+labels = kmeans.fit_predict(X_reduced)
 
 # Save cluster labels
 for memo, label in zip(memos, labels):
@@ -88,7 +101,7 @@ def summarize_cluster(cluster_id, docs, top_n=5):
 print(f"\nFound {num_clusters} clusters\n")
 
 # Representative docs
-representatives = get_representative_docs(X_umap, labels, filenames, top_n=top_n_representatives)
+representatives = get_representative_docs(X_reduced, labels, filenames, top_n=top_n_representatives)
 for cluster, docs in representatives.items():
     print(f"\nCluster {cluster} representative memos:")
     for doc in docs:
@@ -101,9 +114,9 @@ for cluster_id in range(num_clusters):
 
 # Silhouette scores
 if len(set(labels)) > 1:
-    global_score = silhouette_score(X_umap, labels)
+    global_score = silhouette_score(X_reduced, labels)
     print(f"\nGlobal Silhouette Score: {global_score:.4f}")
-    sample_scores = silhouette_samples(X_umap, labels)
+    sample_scores = silhouette_samples(X_reduced, labels)
     for cluster_id in set(labels):
         cluster_scores = sample_scores[labels == cluster_id]
         print(f"Cluster {cluster_id}: silhouette = {cluster_scores.mean():.4f}")
@@ -113,7 +126,7 @@ else:
 # tsne
 print("\nRunning t-SNE dimensionality reduction for visualization...")
 tsne = TSNE(n_components=3, random_state=42, perplexity=30, max_iter=1000)
-reduced = tsne.fit_transform(X_umap)
+reduced = tsne.fit_transform(X_reduced)
 
 fig = plt.figure(figsize=(10, 7))
 ax = fig.add_subplot(111, projection="3d")

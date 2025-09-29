@@ -12,7 +12,7 @@ subfolders = {
     "ssc": f"{folder_path}/ssc",
     "casl": f"{folder_path}/Casl",
     "cbpa": f"{folder_path}/Cbpa",
-    "hrm": f"{folder_path}/HRM",
+    "hrm": f"{folder_path}/HM",
     "sg": f"{folder_path}/sg",
     "permissions": f"{folder_path}/permissions",
     "strategies": f"{folder_path}/Strategies",
